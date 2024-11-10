@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -22,20 +24,14 @@ func setupCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
-func handleOptions(w http.ResponseWriter, request *http.Request) {
-	if request.Method == http.MethodOptions {
+func handleOptions(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
 		setupCORS(w)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
-func scrapeTikTok(w http.ResponseWriter, request *http.Request, searchURL string) {
-	var reqBody RequestBody
-	if err := json.NewDecoder(request.Body).Decode(&reqBody); err != nil {
-		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
-		return
-	}
-
+func scrapeTikTok(w http.ResponseWriter, reqBody RequestBody, searchURL string) {
 	ctx, cancel := chromedp.NewContext(context.Background())
 	defer cancel()
 
@@ -77,21 +73,38 @@ func scrapeTikTok(w http.ResponseWriter, request *http.Request, searchURL string
 	json.NewEncoder(w).Encode(response)
 }
 
-func explore(w http.ResponseWriter, request *http.Request) {
-	handleOptions(w, request)
-	scrapeTikTok(w, request, "https://www.tiktok.com/explore?lang=id-ID")
+func explore(w http.ResponseWriter, r *http.Request) {
+	handleOptions(w, r)
+	scrapeTikTok(w, RequestBody{}, "https://www.tiktok.com/explore?lang=id-ID")
 }
 
-func search(w http.ResponseWriter, request *http.Request) {
-	handleOptions(w, request)
+func search(w http.ResponseWriter, r *http.Request) {
+	setupCORS(w)
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusInternalServerError)
+		return
+	}
+	//log.Println("Request Body (raw):", string(body))
+
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	var reqBody RequestBody
-	if err := json.NewDecoder(request.Body).Decode(&reqBody); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
 		http.Error(w, "Invalid JSON payload", http.StatusBadRequest)
 		return
 	}
+
+	//log.Printf("Decoded Request Body: %+v\n", reqBody)
+
 	searchURL := "https://www.tiktok.com/search?lang=id-ID&q=" + reqBody.Search
-	scrapeTikTok(w, request, searchURL)
+	scrapeTikTok(w, reqBody, searchURL)
 }
 
 func main() {
